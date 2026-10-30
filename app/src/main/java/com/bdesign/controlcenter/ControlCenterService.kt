@@ -1,8 +1,6 @@
 package com.bdesign.controlcenter
 
 import android.accessibilityservice.AccessibilityService
-import android.animation.Animator
-import android.animation.AnimatorListenerAdapter
 import android.animation.ValueAnimator
 import android.content.Context
 import android.content.Intent
@@ -50,14 +48,19 @@ class ControlCenterService : AccessibilityService() {
     private lateinit var wm: WindowManager
     private val owner = OverlayLifecycleOwner()
     private val handler = Handler(Looper.getMainLooper())
-    private val panelOpen = mutableStateOf(true)
+
+    // États lus par Compose
+    private val panelOpen = mutableStateOf(false)
+    private val blurState = mutableStateOf(false)
 
     private var trigger: View? = null
+
+    // Le panneau est créé à l'avance (invisible, déjà composé) pour apparaître sans délai.
     private var panel: PanelRoot? = null
     private var panelParams: WindowManager.LayoutParams? = null
     private var controls: SystemControls? = null
+    private var panelShown = false
     private var closing = false
-    private var blurOn = false
     private var ignoreShadeUntil = 0L
 
     /** Texte « Réglages rapides » tel que SystemUI l'annonce dans la langue du téléphone. */
@@ -67,6 +70,21 @@ class ControlCenterService : AccessibilityService() {
             val id = res.getIdentifier("accessibility_desc_quick_settings", "string", SYSTEM_UI)
             if (id != 0) res.getString(id).trim('.', ' ') else null
         }.getOrNull()
+    }
+
+    private val finishHide = Runnable {
+        val root = panel
+        val lp = panelParams
+        if (root != null && lp != null) {
+            root.visibility = View.INVISIBLE
+            lp.flags = lp.flags or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            lp.blurBehindRadius = 0
+            runCatching { wm.updateViewLayout(root, lp) }
+        }
+        panelShown = false
+        closing = false
     }
 
     private val actions = object : PanelActions {
@@ -103,11 +121,12 @@ class ControlCenterService : AccessibilityService() {
         owner.start()
         instance = this
         addTrigger()
+        ensurePanel()
     }
 
     /**
      * Dans une app, le système garde le swipe sur la barre d'état : le volet Samsung s'ouvre.
-     * On le voit s'ouvrir, on le referme et on affiche notre panneau à la place.
+     * On le voit s'ouvrir, on affiche aussitôt notre panneau par-dessus et on referme le volet.
      */
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
@@ -118,11 +137,11 @@ class ControlCenterService : AccessibilityService() {
         recordSystemUiEvent("$cls | $text")
 
         if (!getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_INTERCEPT, true)) return
-        if (panel != null || SystemClock.uptimeMillis() < ignoreShadeUntil) return
+        if (panelShown || SystemClock.uptimeMillis() < ignoreShadeUntil) return
         if (looksLikeQuickSettings("$cls $text")) {
             ignoreShadeUntil = SystemClock.uptimeMillis() + 1500
+            showPanel()
             performGlobalAction(AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
-            handler.postDelayed({ showPanel() }, 120)
         }
     }
 
@@ -145,7 +164,11 @@ class ControlCenterService : AccessibilityService() {
 
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
-        removePanel()
+        if (::wm.isInitialized) {
+            // Rotation, mode sombre… : on reconstruit le panneau avec les bonnes valeurs.
+            destroyPanel()
+            ensurePanel()
+        }
     }
 
     override fun onUnbind(intent: Intent?): Boolean {
@@ -162,7 +185,7 @@ class ControlCenterService : AccessibilityService() {
 
     private fun cleanup() {
         handler.removeCallbacksAndMessages(null)
-        removePanel()
+        destroyPanel()
         trigger?.let { runCatching { wm.removeView(it) } }
         trigger = null
     }
@@ -190,14 +213,12 @@ class ControlCenterService : AccessibilityService() {
 
     // ---------- Panneau ----------
 
-    fun showPanel() {
+    /** Crée la fenêtre du panneau, invisible et non tactile, déjà prête à s'afficher. */
+    private fun ensurePanel() {
         if (panel != null) return
 
         val ctrl = SystemControls(this)
-        controls = ctrl
-        closing = false
-        panelOpen.value = true
-        blurOn = wm.isCrossWindowBlurEnabled
+        blurState.value = wm.isCrossWindowBlurEnabled
         val dark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
             Configuration.UI_MODE_NIGHT_YES
         val topInset = statusBarHeightDp() + 8.dp
@@ -215,7 +236,7 @@ class ControlCenterService : AccessibilityService() {
             setContent {
                 ControlPanel(
                     visible = panelOpen.value,
-                    blurAvailable = blurOn,
+                    blurAvailable = blurState.value,
                     dark = dark,
                     topInset = topInset,
                     controls = ctrl,
@@ -227,6 +248,8 @@ class ControlCenterService : AccessibilityService() {
             compose,
             FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT),
         )
+        root.visibility = View.INVISIBLE
+        root.isFocusableInTouchMode = true
 
         val lp = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -234,52 +257,80 @@ class ControlCenterService : AccessibilityService() {
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
                 WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_BLUR_BEHIND,
+                WindowManager.LayoutParams.FLAG_BLUR_BEHIND or
+                WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
             PixelFormat.TRANSLUCENT,
         ).apply {
             blurBehindRadius = 0
             layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         }
 
-        wm.addView(root, lp)
-        panel = root
-        panelParams = lp
-
-        root.isFocusableInTouchMode = true
-        root.requestFocus()
-        if (blurOn) animateBlur(lp, root, 48)
-        root.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
-    }
-
-    fun hidePanel() {
-        val root = panel ?: return
-        if (closing) return
-        closing = true
         panelOpen.value = false
-        val lp = panelParams
-        if (blurOn && lp != null) animateBlur(lp, root, 0)
-        handler.postDelayed({ removePanel() }, 280)
+        if (runCatching { wm.addView(root, lp) }.isSuccess) {
+            panel = root
+            panelParams = lp
+            controls = ctrl
+        } else {
+            ctrl.dispose()
+        }
     }
 
-    private fun removePanel() {
+    private fun destroyPanel() {
+        handler.removeCallbacks(finishHide)
         panel?.let { runCatching { wm.removeView(it) } }
         panel = null
         panelParams = null
         controls?.dispose()
         controls = null
+        panelShown = false
         closing = false
+        panelOpen.value = false
     }
 
-    private fun animateBlur(lp: WindowManager.LayoutParams, view: View, to: Int) {
+    fun showPanel() {
+        if (panelShown && !closing) return
+        ensurePanel()
+        val root = panel ?: return
+        val lp = panelParams ?: return
+
+        handler.removeCallbacks(finishHide)
+        closing = false
+        panelShown = true
+
+        val blur = wm.isCrossWindowBlurEnabled
+        blurState.value = blur
+
+        // Fenêtre tactile et focalisable (pour le bouton retour), déjà à moitié floutée.
+        lp.flags = lp.flags and
+            (WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE).inv()
+        lp.blurBehindRadius = if (blur) 28 else 0
+        root.visibility = View.VISIBLE
+        runCatching { wm.updateViewLayout(root, lp) }
+
+        panelOpen.value = true
+        if (blur) animateBlur(lp, root, 52, 170)
+        root.requestFocus()
+        root.performHapticFeedback(HapticFeedbackConstants.CONTEXT_CLICK)
+    }
+
+    fun hidePanel() {
+        val root = panel ?: return
+        if (!panelShown || closing) return
+        closing = true
+        panelOpen.value = false
+        val lp = panelParams
+        if (lp != null && lp.blurBehindRadius > 0) animateBlur(lp, root, 0, 240)
+        handler.postDelayed(finishHide, 280)
+    }
+
+    private fun animateBlur(lp: WindowManager.LayoutParams, view: View, to: Int, durationMs: Long) {
         ValueAnimator.ofInt(lp.blurBehindRadius, to).apply {
-            duration = 260
+            duration = durationMs
             addUpdateListener {
                 lp.blurBehindRadius = it.animatedValue as Int
                 if (view.isAttachedToWindow) runCatching { wm.updateViewLayout(view, lp) }
             }
-            addListener(object : AnimatorListenerAdapter() {
-                override fun onAnimationEnd(animation: Animator) {}
-            })
             start()
         }
     }

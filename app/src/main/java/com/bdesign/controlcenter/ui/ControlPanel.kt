@@ -112,23 +112,26 @@ private fun PanelContent(
     val pkg = LocalContext.current.packageName
     val s = controls.state
 
-    var shown by remember { mutableStateOf(false) }
-    LaunchedEffect(Unit) {
-        shown = true
-        while (isActive) {
-            controls.refresh()
-            delay(600)
+    var brightness by remember { mutableFloatStateOf(controls.brightness()) }
+    var volume by remember { mutableFloatStateOf(controls.volume()) }
+
+    // Le panneau est composé à l'avance : on ne rafraîchit l'état que lorsqu'il est affiché.
+    LaunchedEffect(visible) {
+        if (visible) {
+            brightness = controls.brightness()
+            volume = controls.volume()
+            while (isActive) {
+                controls.refresh()
+                delay(600)
+            }
         }
     }
 
     val progress by animateFloatAsState(
-        targetValue = if (visible && shown) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.85f, stiffness = 320f),
+        targetValue = if (visible) 1f else 0f,
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 420f),
         label = "panel",
     )
-
-    var brightness by remember { mutableFloatStateOf(controls.brightness()) }
-    var volume by remember { mutableFloatStateOf(controls.volume()) }
 
     // Voile derrière le panneau : le flou fait le gros du travail, le voile assure la lisibilité.
     val scrimMax = when {
