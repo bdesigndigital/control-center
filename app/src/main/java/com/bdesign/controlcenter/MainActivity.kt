@@ -99,6 +99,7 @@ private fun SetupScreen() {
         ctx.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
     }
     val events = remember(tick) { ControlCenterService.recentSystemUiEvents.toList() }
+    val shizuku = remember(tick) { ShizukuShell.status(ctx) }
 
     val prefs = remember { ctx.getSharedPreferences(ControlCenterService.PREFS, Context.MODE_PRIVATE) }
     var intercept by remember { mutableStateOf(prefs.getBoolean(ControlCenterService.KEY_INTERCEPT, true)) }
@@ -157,6 +158,39 @@ private fun SetupScreen() {
                 done = dnd,
                 action = "Autoriser",
                 onClick = { ctx.startActivity(Intents.dnd()) },
+            )
+            Step(
+                title = "5. Contrôle direct (Shizuku) — optionnel",
+                description = when (shizuku) {
+                    ShizukuStatus.NOT_INSTALLED ->
+                        "Pour activer Wi-Fi, Bluetooth, données et mode avion d’un seul appui (Android l’interdit sinon). Installe d’abord l’app Shizuku."
+                    ShizukuStatus.NOT_RUNNING ->
+                        "Ouvre Shizuku et choisis « Démarrer via le débogage sans fil » (Wi-Fi requis, à refaire après chaque redémarrage)."
+                    ShizukuStatus.NEEDS_PERMISSION ->
+                        "Shizuku tourne. Autorise Control Center à l’utiliser."
+                    ShizukuStatus.READY ->
+                        "Actif : un appui bascule directement, un appui long ouvre les réglages."
+                },
+                done = shizuku == ShizukuStatus.READY,
+                action = when (shizuku) {
+                    ShizukuStatus.NOT_INSTALLED -> "Installer Shizuku"
+                    ShizukuStatus.NOT_RUNNING -> "Ouvrir Shizuku"
+                    ShizukuStatus.NEEDS_PERMISSION -> "Autoriser"
+                    ShizukuStatus.READY -> "Ouvrir Shizuku"
+                },
+                onClick = {
+                    when (shizuku) {
+                        ShizukuStatus.NOT_INSTALLED -> ctx.startActivity(
+                            Intent(
+                                Intent.ACTION_VIEW,
+                                Uri.parse("https://play.google.com/store/apps/details?id=${ShizukuShell.PACKAGE}"),
+                            )
+                        )
+                        ShizukuStatus.NEEDS_PERMISSION -> ShizukuShell.requestPermission()
+                        else -> ctx.packageManager.getLaunchIntentForPackage(ShizukuShell.PACKAGE)
+                            ?.let { ctx.startActivity(it) }
+                    }
+                },
             )
 
             Column(
@@ -278,7 +312,7 @@ private fun PillButton(label: String, onClick: () -> Unit) {
     val c = LocalPanelColors.current
     Box(
         Modifier
-            .bounceClick(onClick)
+            .bounceClick(onClick = onClick)
             .clip(CircleShape)
             .background(c.circleOff)
             .padding(horizontal = 18.dp, vertical = 10.dp),

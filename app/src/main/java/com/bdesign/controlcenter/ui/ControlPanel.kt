@@ -170,7 +170,7 @@ private fun PanelContent(
                     .height(168.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                ConnectivityCard(s, actions, Modifier.weight(1f).fillMaxHeight())
+                ConnectivityCard(s, controls, actions, Modifier.weight(1f).fillMaxHeight())
                 MediaCard(s, controls, actions, Modifier.weight(1f).fillMaxHeight())
             }
 
@@ -222,6 +222,7 @@ private fun PanelContent(
                             accent = Yellow,
                             activeContent = Color(0xFF1C1C1E),
                             modifier = Modifier.weight(1f).fillMaxHeight(),
+                            onLongClick = { controls.cycleTorchStrength() },
                         ) { controls.toggleTorch() }
                         SquareTile(
                             icon = Icons.Rounded.DoNotDisturbOn,
@@ -229,6 +230,7 @@ private fun PanelContent(
                             active = s.dnd,
                             accent = Purple,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
+                            onLongClick = { actions.launch(Intents.zenSettings()) },
                         ) {
                             if (!controls.toggleDnd()) actions.launch(Intents.dnd())
                         }
@@ -245,6 +247,7 @@ private fun PanelContent(
                             active = s.autoRotate,
                             accent = Orange,
                             modifier = Modifier.weight(1f).fillMaxHeight(),
+                            onLongClick = { actions.launch(Intents.displaySettings()) },
                         ) {
                             if (!controls.toggleRotation()) actions.launch(Intents.writeSettings(pkg))
                         }
@@ -265,16 +268,25 @@ private fun PanelContent(
                     .height(64.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                ShortcutTile(Icons.Rounded.CameraAlt, "Appareil photo", Modifier.weight(1f).fillMaxHeight()) {
+                ShortcutTile(
+                    Icons.Rounded.CameraAlt, "Appareil photo", Modifier.weight(1f).fillMaxHeight(),
+                    onLongClick = { actions.launch(Intents.videoCamera()) },
+                ) {
                     actions.launch(Intents.camera())
                 }
                 ShortcutTile(Icons.Rounded.Calculate, "Calculatrice", Modifier.weight(1f).fillMaxHeight()) {
                     actions.launch(Intents.calculator())
                 }
-                ShortcutTile(Icons.Rounded.Timer, "Minuteur", Modifier.weight(1f).fillMaxHeight()) {
+                ShortcutTile(
+                    Icons.Rounded.Timer, "Minuteur", Modifier.weight(1f).fillMaxHeight(),
+                    onLongClick = { actions.launch(Intents.alarms()) },
+                ) {
                     actions.launch(Intents.timer())
                 }
-                ShortcutTile(Icons.Rounded.Lock, "Verrouiller", Modifier.weight(1f).fillMaxHeight()) {
+                ShortcutTile(
+                    Icons.Rounded.Lock, "Verrouiller", Modifier.weight(1f).fillMaxHeight(),
+                    onLongClick = { actions.global(AccessibilityService.GLOBAL_ACTION_POWER_DIALOG) },
+                ) {
                     actions.global(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN)
                 }
                 ShortcutTile(Icons.Rounded.Settings, "Réglages", Modifier.weight(1f).fillMaxHeight()) {
@@ -303,26 +315,43 @@ private fun PanelContent(
 }
 
 @Composable
-private fun ConnectivityCard(s: ControlState, actions: PanelActions, modifier: Modifier) {
+private fun ConnectivityCard(
+    s: ControlState,
+    controls: SystemControls,
+    actions: PanelActions,
+    modifier: Modifier,
+) {
     Box(modifier.tile(CardShape).padding(14.dp)) {
         Column(
             Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.SpaceBetween,
         ) {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                CircleButton(Icons.Rounded.Wifi, "Wi-Fi", s.wifi, Blue) {
-                    actions.launch(Intents.internetPanel())
+                CircleButton(
+                    Icons.Rounded.Wifi, "Wi-Fi", s.wifi, Blue,
+                    onLongClick = { actions.launch(Intents.wifiSettings()) },
+                ) {
+                    if (!controls.toggleWifi()) actions.launch(Intents.internetPanel())
                 }
-                CircleButton(Icons.Rounded.Bluetooth, "Bluetooth", s.bluetooth, Blue) {
-                    actions.launch(Intents.bluetooth())
+                CircleButton(
+                    Icons.Rounded.Bluetooth, "Bluetooth", s.bluetooth, Blue,
+                    onLongClick = { actions.launch(Intents.bluetooth()) },
+                ) {
+                    if (!controls.toggleBluetooth()) actions.launch(Intents.bluetooth())
                 }
             }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                CircleButton(Icons.Rounded.SignalCellularAlt, "Données mobiles", s.cellular, Green) {
-                    actions.launch(Intents.internetPanel())
+                CircleButton(
+                    Icons.Rounded.SignalCellularAlt, "Données mobiles", s.cellular, Green,
+                    onLongClick = { actions.launch(Intents.dataSettings()) },
+                ) {
+                    if (!controls.toggleData()) actions.launch(Intents.internetPanel())
                 }
-                CircleButton(Icons.Rounded.AirplanemodeActive, "Mode avion", s.airplane, Orange) {
-                    actions.launch(Intents.airplane())
+                CircleButton(
+                    Icons.Rounded.AirplanemodeActive, "Mode avion", s.airplane, Orange,
+                    onLongClick = { actions.launch(Intents.airplane()) },
+                ) {
+                    if (!controls.toggleAirplane()) actions.launch(Intents.airplane())
                 }
             }
         }
@@ -416,7 +445,7 @@ private fun MediaButton(icon: ImageVector, onClick: () -> Unit) {
     Box(
         Modifier
             .size(40.dp)
-            .bounceClick(onClick),
+            .bounceClick(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
         Icon(icon, contentDescription = null, tint = c.content, modifier = Modifier.size(26.dp))
@@ -429,13 +458,14 @@ private fun CircleButton(
     description: String,
     active: Boolean,
     accent: Color,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val c = LocalPanelColors.current
     Box(
         Modifier
             .size(58.dp)
-            .bounceClick(onClick)
+            .bounceClick(onLongClick, onClick)
             .clip(CircleShape)
             .background(if (active) accent else c.circleOff),
         contentAlignment = Alignment.Center,
@@ -457,13 +487,14 @@ private fun SquareTile(
     accent: Color,
     modifier: Modifier = Modifier,
     activeContent: Color = Color.White,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val c = LocalPanelColors.current
     val content = if (active) activeContent else c.content
     Box(
         modifier
-            .bounceClick(onClick)
+            .bounceClick(onLongClick, onClick)
             .tile(TileShape)
             .background(if (active) accent else Color.Transparent),
         contentAlignment = Alignment.Center,
@@ -483,12 +514,13 @@ private fun ShortcutTile(
     icon: ImageVector,
     description: String,
     modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val c = LocalPanelColors.current
     Box(
         modifier
-            .bounceClick(onClick)
+            .bounceClick(onLongClick, onClick)
             .tile(TileShape),
         contentAlignment = Alignment.Center,
     ) {

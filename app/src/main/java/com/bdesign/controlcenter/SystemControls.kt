@@ -17,6 +17,7 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.Uri
 import android.net.wifi.WifiManager
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.AlarmClock
@@ -63,6 +64,14 @@ object Intents {
 
     fun timer() = Intent(AlarmClock.ACTION_SHOW_TIMERS)
     fun settings() = Intent(Settings.ACTION_SETTINGS)
+
+    // Appuis longs
+    fun wifiSettings() = Intent(Settings.ACTION_WIFI_SETTINGS)
+    fun dataSettings() = Intent(Settings.ACTION_DATA_ROAMING_SETTINGS)
+    fun zenSettings() = Intent("android.settings.ZEN_MODE_SETTINGS")
+    fun displaySettings() = Intent(Settings.ACTION_DISPLAY_SETTINGS)
+    fun videoCamera() = Intent(MediaStore.INTENT_ACTION_VIDEO_CAMERA)
+    fun alarms() = Intent(AlarmClock.ACTION_SHOW_ALARMS)
 }
 
 /**
@@ -115,10 +124,8 @@ class SystemControls(context: Context) {
         state = ControlState(
             wifi = runCatching { wifiManager.isWifiEnabled }.getOrDefault(false),
             bluetooth = runCatching { bluetoothManager.adapter?.isEnabled == true }.getOrDefault(false),
-            cellular = runCatching {
-                connectivity.getNetworkCapabilities(connectivity.activeNetwork)
-                    ?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true
-            }.getOrDefault(false),
+            // État réel du réglage « données mobiles » (pas seulement « le réseau actif est mobile »).
+            cellular = Settings.Global.getInt(ctx.contentResolver, "mobile_data", 1) == 1,
             airplane = Settings.Global.getInt(ctx.contentResolver, Settings.Global.AIRPLANE_MODE_ON, 0) == 1,
             torch = torchOn,
             dnd = notifications.currentInterruptionFilter.let {
@@ -166,6 +173,51 @@ class SystemControls(context: Context) {
     }
 
     // ---------- Actions ----------
+
+    /**
+     * Bascule directe via Shizuku. Renvoie false si Shizuku n'est pas prêt :
+     * l'interface ouvre alors le panneau système à la place.
+     */
+    private fun shell(command: String): Boolean {
+        if (!ShizukuShell.hasPermission()) return false
+        Thread {
+            ShizukuShell.run(command)
+            handler.post { refresh() }
+            handler.postDelayed({ refresh() }, 900)
+        }.start()
+        return true
+    }
+
+    fun toggleWifi() = shell("svc wifi ${if (state.wifi) "disable" else "enable"}")
+
+    fun toggleBluetooth() = shell("svc bluetooth ${if (state.bluetooth) "disable" else "enable"}")
+
+    fun toggleData() = shell("svc data ${if (state.cellular) "disable" else "enable"}")
+
+    fun toggleAirplane() =
+        shell("cmd connectivity airplane-mode ${if (state.airplane) "disable" else "enable"}")
+
+    private var torchLevelIndex = -1
+
+    /** Appui long sur la lampe : allume et passe à l'intensité suivante (faible, moyenne, max). */
+    fun cycleTorchStrength() {
+        if (Build.VERSION.SDK_INT < 33) {
+            toggleTorch()
+            return
+        }
+        val id = torchId ?: return
+        runCatching {
+            val max = camera.getCameraCharacteristics(id)
+                .get(CameraCharacteristics.FLASH_INFO_STRENGTH_MAXIMUM_LEVEL) ?: 1
+            if (max <= 1) {
+                toggleTorch()
+                return
+            }
+            val levels = listOf(1, (max / 2).coerceAtLeast(1), max).distinct()
+            torchLevelIndex = (torchLevelIndex + 1) % levels.size
+            camera.turnOnTorchWithStrengthLevel(id, levels[torchLevelIndex])
+        }
+    }
 
     fun toggleTorch() {
         val id = torchId ?: return
