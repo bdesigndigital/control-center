@@ -41,11 +41,12 @@ import androidx.compose.material.icons.rounded.SkipPrevious
 import androidx.compose.material.icons.rounded.Timer
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.VolumeUp
-import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material.icons.rounded.WbSunny
+import androidx.compose.material.icons.rounded.Wifi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -75,20 +76,39 @@ import com.bdesign.controlcenter.SystemControls
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
-private val Blue = Color(0xFF2F80FF)
+private val Blue = Color(0xFF0A84FF)
 private val Green = Color(0xFF30D158)
 private val Orange = Color(0xFFFF9F0A)
-private val Purple = Color(0xFF7B61FF)
-private val Yellow = Color(0xFFFFB800)
+private val Purple = Color(0xFF5E5CE6)
+private val Yellow = Color(0xFFFFD60A)
+
+private val CardShape = RoundedCornerShape(28.dp)
+private val TileShape = RoundedCornerShape(22.dp)
 
 @Composable
 fun ControlPanel(
     visible: Boolean,
     blurAvailable: Boolean,
+    dark: Boolean,
     topInset: Dp,
     controls: SystemControls,
     actions: PanelActions,
 ) {
+    CompositionLocalProvider(LocalPanelColors provides panelColors(dark)) {
+        PanelContent(visible, blurAvailable, dark, topInset, controls, actions)
+    }
+}
+
+@Composable
+private fun PanelContent(
+    visible: Boolean,
+    blurAvailable: Boolean,
+    dark: Boolean,
+    topInset: Dp,
+    controls: SystemControls,
+    actions: PanelActions,
+) {
+    val c = LocalPanelColors.current
     val pkg = LocalContext.current.packageName
     val s = controls.state
 
@@ -103,19 +123,25 @@ fun ControlPanel(
 
     val progress by animateFloatAsState(
         targetValue = if (visible && shown) 1f else 0f,
-        animationSpec = spring(dampingRatio = 0.8f, stiffness = 300f),
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 320f),
         label = "panel",
     )
 
     var brightness by remember { mutableFloatStateOf(controls.brightness()) }
     var volume by remember { mutableFloatStateOf(controls.volume()) }
 
-    val scrimAlpha = if (blurAvailable) 0.20f else 0.55f
+    // Voile derrière le panneau : le flou fait le gros du travail, le voile assure la lisibilité.
+    val scrimMax = when {
+        blurAvailable && dark -> 0.35f
+        blurAvailable -> 0.12f
+        dark -> 0.65f
+        else -> 0.40f
+    }
 
     Box(
         Modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = scrimAlpha * progress.coerceIn(0f, 1f)))
+            .background(Color.Black.copy(alpha = scrimMax * progress.coerceIn(0f, 1f)))
             .pointerInput(Unit) { detectTapGestures { actions.close() } }
     ) {
         Column(
@@ -126,8 +152,8 @@ fun ControlPanel(
                 .graphicsLayer {
                     val p = progress
                     alpha = p.coerceIn(0f, 1f)
-                    translationY = -48.dp.toPx() * (1f - p)
-                    val sc = 0.92f + 0.08f * p
+                    translationY = -40.dp.toPx() * (1f - p)
+                    val sc = 0.94f + 0.06f * p
                     scaleX = sc
                     scaleY = sc
                     transformOrigin = TransformOrigin(1f, 0f)
@@ -151,7 +177,7 @@ fun ControlPanel(
                     .height(176.dp),
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                GlassVerticalSlider(
+                VerticalSlider(
                     value = brightness,
                     onValueChange = {
                         brightness = it
@@ -165,7 +191,7 @@ fun ControlPanel(
                         { actions.launch(Intents.writeSettings(pkg)) }
                     },
                 )
-                GlassVerticalSlider(
+                VerticalSlider(
                     value = volume,
                     onValueChange = {
                         volume = it
@@ -186,14 +212,15 @@ fun ControlPanel(
                             .fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        GlassTile(
+                        SquareTile(
                             icon = Icons.Rounded.FlashOn,
                             label = "Lampe",
                             active = s.torch,
                             accent = Yellow,
+                            activeContent = Color(0xFF1C1C1E),
                             modifier = Modifier.weight(1f).fillMaxHeight(),
                         ) { controls.toggleTorch() }
-                        GlassTile(
+                        SquareTile(
                             icon = Icons.Rounded.DoNotDisturbOn,
                             label = "Silence",
                             active = s.dnd,
@@ -209,7 +236,7 @@ fun ControlPanel(
                             .fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(12.dp),
                     ) {
-                        GlassTile(
+                        SquareTile(
                             icon = Icons.Rounded.ScreenRotation,
                             label = "Rotation",
                             active = s.autoRotate,
@@ -218,7 +245,7 @@ fun ControlPanel(
                         ) {
                             if (!controls.toggleRotation()) actions.launch(Intents.writeSettings(pkg))
                         }
-                        GlassTile(
+                        SquareTile(
                             icon = Icons.Rounded.CropFree,
                             label = "Capture",
                             active = false,
@@ -255,17 +282,17 @@ fun ControlPanel(
             Box(
                 Modifier
                     .fillMaxWidth()
-                    .height(44.dp)
+                    .height(48.dp)
                     .bounceClick { actions.global(AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS) }
-                    .glass(CircleShape, 0.12f),
+                    .tile(CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    Icon(Icons.Rounded.Tune, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                    Text("Réglages rapides système", color = Color.White.copy(alpha = 0.9f), fontSize = 13.sp)
+                    Icon(Icons.Rounded.Tune, contentDescription = null, tint = c.content, modifier = Modifier.size(18.dp))
+                    Text("Réglages rapides système", color = c.content, fontSize = 14.sp, fontWeight = FontWeight.Medium)
                 }
             }
         }
@@ -274,7 +301,7 @@ fun ControlPanel(
 
 @Composable
 private fun ConnectivityCard(s: ControlState, actions: PanelActions, modifier: Modifier) {
-    Box(modifier.glass(RoundedCornerShape(32.dp)).padding(14.dp)) {
+    Box(modifier.tile(CardShape).padding(14.dp)) {
         Column(
             Modifier.fillMaxSize(),
             verticalArrangement = Arrangement.SpaceBetween,
@@ -301,18 +328,19 @@ private fun ConnectivityCard(s: ControlState, actions: PanelActions, modifier: M
 
 @Composable
 private fun MediaCard(s: ControlState, controls: SystemControls, actions: PanelActions, modifier: Modifier) {
+    val c = LocalPanelColors.current
     val media = s.media
-    Box(modifier.glass(RoundedCornerShape(32.dp)).padding(14.dp)) {
+    Box(modifier.tile(CardShape).padding(14.dp)) {
         if (media == null) {
             Column(
                 Modifier.align(Alignment.Center),
                 horizontalAlignment = Alignment.CenterHorizontally,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
-                Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = Color.White.copy(alpha = 0.7f), modifier = Modifier.size(28.dp))
+                Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = c.secondary, modifier = Modifier.size(28.dp))
                 Text(
                     text = if (s.mediaAccess) "Rien en lecture" else "Autoriser l’accès aux médias",
-                    color = Color.White.copy(alpha = 0.75f),
+                    color = c.secondary,
                     fontSize = 13.sp,
                     textAlign = TextAlign.Center,
                     modifier = if (s.mediaAccess) {
@@ -332,8 +360,8 @@ private fun MediaCard(s: ControlState, controls: SystemControls, actions: PanelA
                     Box(
                         Modifier
                             .size(44.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(Color.White.copy(alpha = 0.15f)),
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(c.circleOff),
                         contentAlignment = Alignment.Center,
                     ) {
                         if (art != null) {
@@ -344,13 +372,13 @@ private fun MediaCard(s: ControlState, controls: SystemControls, actions: PanelA
                                 modifier = Modifier.fillMaxSize(),
                             )
                         } else {
-                            Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = Color.White, modifier = Modifier.size(22.dp))
+                            Icon(Icons.Rounded.MusicNote, contentDescription = null, tint = c.content, modifier = Modifier.size(22.dp))
                         }
                     }
                     Column(Modifier.weight(1f)) {
                         Text(
                             media.title,
-                            color = Color.White,
+                            color = c.content,
                             fontSize = 14.sp,
                             fontWeight = FontWeight.SemiBold,
                             maxLines = 1,
@@ -358,7 +386,7 @@ private fun MediaCard(s: ControlState, controls: SystemControls, actions: PanelA
                         )
                         Text(
                             media.artist,
-                            color = Color.White.copy(alpha = 0.7f),
+                            color = c.secondary,
                             fontSize = 12.sp,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
@@ -381,13 +409,14 @@ private fun MediaCard(s: ControlState, controls: SystemControls, actions: PanelA
 
 @Composable
 private fun MediaButton(icon: ImageVector, onClick: () -> Unit) {
+    val c = LocalPanelColors.current
     Box(
         Modifier
             .size(40.dp)
             .bounceClick(onClick),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
+        Icon(icon, contentDescription = null, tint = c.content, modifier = Modifier.size(26.dp))
     }
 }
 
@@ -399,40 +428,49 @@ private fun CircleButton(
     accent: Color,
     onClick: () -> Unit,
 ) {
+    val c = LocalPanelColors.current
     Box(
         Modifier
             .size(58.dp)
             .bounceClick(onClick)
-            .glass(CircleShape, 0.14f)
-            .background(if (active) accent.copy(alpha = 0.92f) else Color.Transparent),
+            .clip(CircleShape)
+            .background(if (active) accent else c.circleOff),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(26.dp))
+        Icon(
+            icon,
+            contentDescription = description,
+            tint = if (active) Color.White else c.content,
+            modifier = Modifier.size(26.dp),
+        )
     }
 }
 
 @Composable
-private fun GlassTile(
+private fun SquareTile(
     icon: ImageVector,
     label: String,
     active: Boolean,
     accent: Color,
     modifier: Modifier = Modifier,
+    activeContent: Color = Color.White,
     onClick: () -> Unit,
 ) {
+    val c = LocalPanelColors.current
+    val content = if (active) activeContent else c.content
     Box(
         modifier
             .bounceClick(onClick)
-            .glass(RoundedCornerShape(26.dp))
-            .background(if (active) accent.copy(alpha = 0.92f) else Color.Transparent),
+            .tile(TileShape)
+            .background(if (active) accent else Color.Transparent),
         contentAlignment = Alignment.Center,
     ) {
         Column(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Icon(icon, contentDescription = label, tint = Color.White, modifier = Modifier.size(26.dp))
-            Text(label, color = Color.White.copy(alpha = 0.9f), fontSize = 11.sp, maxLines = 1)
+            Icon(icon, contentDescription = label, tint = content, modifier = Modifier.size(26.dp))
+            Text(label, color = content, fontSize = 11.sp, fontWeight = FontWeight.Medium, maxLines = 1)
         }
     }
 }
@@ -444,25 +482,27 @@ private fun ShortcutTile(
     modifier: Modifier = Modifier,
     onClick: () -> Unit,
 ) {
+    val c = LocalPanelColors.current
     Box(
         modifier
             .bounceClick(onClick)
-            .glass(RoundedCornerShape(22.dp)),
+            .tile(TileShape),
         contentAlignment = Alignment.Center,
     ) {
-        Icon(icon, contentDescription = description, tint = Color.White, modifier = Modifier.size(24.dp))
+        Icon(icon, contentDescription = description, tint = c.content, modifier = Modifier.size(24.dp))
     }
 }
 
-/** Grand slider vertical translucide (style ColorOS / iOS). */
+/** Grand slider vertical (style iOS) : piste grise, remplissage blanc. */
 @Composable
-private fun GlassVerticalSlider(
+private fun VerticalSlider(
     value: Float,
     onValueChange: (Float) -> Unit,
     icon: ImageVector,
     modifier: Modifier = Modifier,
     onBlocked: (() -> Unit)? = null,
 ) {
+    val c = LocalPanelColors.current
     val interaction = if (onBlocked != null) {
         Modifier.clickable { onBlocked() }
     } else {
@@ -487,7 +527,8 @@ private fun GlassVerticalSlider(
 
     Box(
         modifier
-            .glass(RoundedCornerShape(30.dp), 0.14f)
+            .clip(CardShape)
+            .background(c.track)
             .then(interaction)
     ) {
         Box(
@@ -495,12 +536,12 @@ private fun GlassVerticalSlider(
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
                 .fillMaxHeight(value.coerceIn(0f, 1f))
-                .background(Color.White.copy(alpha = 0.92f))
+                .background(c.fill)
         )
         Icon(
             icon,
             contentDescription = null,
-            tint = if (value > 0.12f) Color(0xFF2B2B2E) else Color.White,
+            tint = if (value > 0.12f) c.fillIcon else c.content,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .padding(bottom = 16.dp)

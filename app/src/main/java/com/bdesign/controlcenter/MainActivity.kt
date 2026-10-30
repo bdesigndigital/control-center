@@ -12,6 +12,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -25,33 +26,45 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.app.NotificationManagerCompat
+import com.bdesign.controlcenter.ui.LocalPanelColors
 import com.bdesign.controlcenter.ui.bounceClick
-import com.bdesign.controlcenter.ui.glass
+import com.bdesign.controlcenter.ui.panelColors
+import com.bdesign.controlcenter.ui.tile
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+
+private val Green = Color(0xFF30D158)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent { SetupScreen() }
+        setContent {
+            CompositionLocalProvider(LocalPanelColors provides panelColors(isSystemInDarkTheme())) {
+                SetupScreen()
+            }
+        }
     }
 }
 
@@ -68,6 +81,7 @@ private fun isAccessibilityOn(ctx: Context): Boolean {
 @Composable
 private fun SetupScreen() {
     val ctx = LocalContext.current
+    val c = LocalPanelColors.current
 
     var tick by remember { mutableIntStateOf(0) }
     LaunchedEffect(Unit) {
@@ -84,11 +98,15 @@ private fun SetupScreen() {
     val dnd = remember(tick) {
         ctx.getSystemService(NotificationManager::class.java).isNotificationPolicyAccessGranted
     }
+    val events = remember(tick) { ControlCenterService.recentSystemUiEvents.toList() }
+
+    val prefs = remember { ctx.getSharedPreferences(ControlCenterService.PREFS, Context.MODE_PRIVATE) }
+    var intercept by remember { mutableStateOf(prefs.getBoolean(ControlCenterService.KEY_INTERCEPT, true)) }
 
     Box(
         Modifier
             .fillMaxSize()
-            .background(Brush.linearGradient(listOf(Color(0xFF1B1F3B), Color(0xFF3D5AFE), Color(0xFF7B61FF))))
+            .background(c.screenBg)
     ) {
         Column(
             Modifier
@@ -99,10 +117,10 @@ private fun SetupScreen() {
                 .padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
-            Text("Control Center", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
+            Text("Control Center", color = c.content, fontSize = 30.sp, fontWeight = FontWeight.Bold)
             Text(
                 "Une fois configuré, glisse vers le bas depuis le coin supérieur droit de l’écran pour ouvrir le panneau.",
-                color = Color.White.copy(alpha = 0.8f),
+                color = c.secondary,
                 fontSize = 14.sp,
             )
 
@@ -141,6 +159,44 @@ private fun SetupScreen() {
                 onClick = { ctx.startActivity(Intents.dnd()) },
             )
 
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .tile(RoundedCornerShape(22.dp))
+                    .padding(18.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        "Remplacer le volet rapide du système",
+                        color = c.content,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        modifier = Modifier.weight(1f),
+                    )
+                    Switch(
+                        checked = intercept,
+                        onCheckedChange = {
+                            intercept = it
+                            prefs.edit().putBoolean(ControlCenterService.KEY_INTERCEPT, it).apply()
+                        },
+                        colors = SwitchDefaults.colors(
+                            checkedTrackColor = Green,
+                            checkedThumbColor = Color.White,
+                        ),
+                    )
+                }
+                Text(
+                    "Dans une app, Samsung garde le swipe sur la barre d’état. Quand il ouvre ses réglages rapides, le panneau est refermé et remplacé par celui-ci.",
+                    color = c.secondary,
+                    fontSize = 13.sp,
+                )
+            }
+
             Box(
                 Modifier
                     .fillMaxWidth()
@@ -153,11 +209,31 @@ private fun SetupScreen() {
                             Toast.makeText(ctx, "Active d’abord le service d’accessibilité", Toast.LENGTH_SHORT).show()
                         }
                     }
-                    .background(Color.White)
+                    .background(c.content)
                     .padding(vertical = 16.dp),
                 contentAlignment = Alignment.Center,
             ) {
-                Text("Tester le panneau", color = Color(0xFF1B1F3B), fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+                Text("Tester le panneau", color = c.screenBg, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            }
+
+            if (events.isNotEmpty()) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .tile(RoundedCornerShape(22.dp))
+                        .padding(18.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    Text("Diagnostic", color = c.content, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "Derniers événements du système (classe | texte). Utile si le remplacement ne se déclenche pas.",
+                        color = c.secondary,
+                        fontSize = 12.sp,
+                    )
+                    events.forEach {
+                        Text(it, color = c.content, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+                    }
+                }
             }
         }
     }
@@ -173,22 +249,23 @@ private fun Step(
     action2: String? = null,
     onClick2: (() -> Unit)? = null,
 ) {
+    val c = LocalPanelColors.current
     Column(
         Modifier
             .fillMaxWidth()
-            .glass(RoundedCornerShape(26.dp))
+            .tile(RoundedCornerShape(22.dp))
             .padding(18.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(title, color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
+            Text(title, color = c.content, fontSize = 16.sp, fontWeight = FontWeight.SemiBold)
             Text(
                 if (done) "✓ Activé" else "À faire",
-                color = if (done) Color(0xFF30D158) else Color.White.copy(alpha = 0.6f),
+                color = if (done) Green else c.secondary,
                 fontSize = 13.sp,
             )
         }
-        Text(description, color = Color.White.copy(alpha = 0.75f), fontSize = 13.sp)
+        Text(description, color = c.secondary, fontSize = 13.sp)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             PillButton(action, onClick)
             if (action2 != null && onClick2 != null) PillButton(action2, onClick2)
@@ -198,13 +275,15 @@ private fun Step(
 
 @Composable
 private fun PillButton(label: String, onClick: () -> Unit) {
+    val c = LocalPanelColors.current
     Box(
         Modifier
             .bounceClick(onClick)
-            .glass(CircleShape, 0.22f)
+            .clip(CircleShape)
+            .background(c.circleOff)
             .padding(horizontal = 18.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center,
     ) {
-        Text(label, color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Medium)
+        Text(label, color = c.content, fontSize = 13.sp, fontWeight = FontWeight.Medium)
     }
 }

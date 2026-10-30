@@ -10,6 +10,7 @@ import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
 import android.view.KeyEvent
@@ -37,6 +38,13 @@ class ControlCenterService : AccessibilityService() {
     companion object {
         @Volatile
         var instance: ControlCenterService? = null
+
+        const val PREFS = "cc_prefs"
+        const val KEY_INTERCEPT = "intercept_quick_settings"
+        private const val SYSTEM_UI = "com.android.systemui"
+
+        /** Derniers événements SystemUI vus (affichés dans l'app pour le diagnostic). */
+        val recentSystemUiEvents = ArrayDeque<String>()
     }
 
     private lateinit var wm: WindowManager
@@ -50,6 +58,16 @@ class ControlCenterService : AccessibilityService() {
     private var controls: SystemControls? = null
     private var closing = false
     private var blurOn = false
+    private var ignoreShadeUntil = 0L
+
+    /** Texte « Réglages rapides » tel que SystemUI l'annonce dans la langue du téléphone. */
+    private val quickSettingsLabel: String? by lazy {
+        runCatching {
+            val res = packageManager.getResourcesForApplication(SYSTEM_UI)
+            val id = res.getIdentifier("accessibility_desc_quick_settings", "string", SYSTEM_UI)
+            if (id != 0) res.getString(id).trim('.', ' ') else null
+        }.getOrNull()
+    }
 
     private val actions = object : PanelActions {
         override fun close() = hidePanel()
@@ -68,6 +86,12 @@ class ControlCenterService : AccessibilityService() {
         }
 
         override fun global(action: Int) {
+            if (action == AccessibilityService.GLOBAL_ACTION_QUICK_SETTINGS ||
+                action == AccessibilityService.GLOBAL_ACTION_NOTIFICATIONS
+            ) {
+                // Évite que notre propre ouverture du volet système soit « interceptée ».
+                ignoreShadeUntil = SystemClock.uptimeMillis() + 2500
+            }
             hidePanel()
             handler.postDelayed({ performGlobalAction(action) }, 380)
         }
@@ -81,7 +105,41 @@ class ControlCenterService : AccessibilityService() {
         addTrigger()
     }
 
-    override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+    /**
+     * Dans une app, le système garde le swipe sur la barre d'état : le volet Samsung s'ouvre.
+     * On le voit s'ouvrir, on le referme et on affiche notre panneau à la place.
+     */
+    override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        if (event == null || event.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        if (event.packageName?.toString() != SYSTEM_UI) return
+
+        val cls = event.className?.toString().orEmpty()
+        val text = event.text.joinToString(" ") { it?.toString().orEmpty() }
+        recordSystemUiEvent("$cls | $text")
+
+        if (!getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_INTERCEPT, true)) return
+        if (panel != null || SystemClock.uptimeMillis() < ignoreShadeUntil) return
+        if (looksLikeQuickSettings("$cls $text")) {
+            ignoreShadeUntil = SystemClock.uptimeMillis() + 1500
+            performGlobalAction(AccessibilityService.GLOBAL_ACTION_DISMISS_NOTIFICATION_SHADE)
+            handler.postDelayed({ showPanel() }, 120)
+        }
+    }
+
+    private fun recordSystemUiEvent(line: String) {
+        recentSystemUiEvents.addFirst(line.take(120))
+        while (recentSystemUiEvents.size > 8) recentSystemUiEvents.removeLast()
+    }
+
+    private fun looksLikeQuickSettings(haystack: String): Boolean {
+        val h = haystack.lowercase()
+        val label = quickSettingsLabel?.lowercase()
+        return (label != null && label.isNotEmpty() && h.contains(label)) ||
+            h.contains("quick settings") ||
+            h.contains("réglages rapides") ||
+            h.contains("quicksettings") ||
+            h.contains("quickpanel")
+    }
 
     override fun onInterrupt() {}
 
@@ -140,6 +198,8 @@ class ControlCenterService : AccessibilityService() {
         closing = false
         panelOpen.value = true
         blurOn = wm.isCrossWindowBlurEnabled
+        val dark = (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) ==
+            Configuration.UI_MODE_NIGHT_YES
         val topInset = statusBarHeightDp() + 8.dp
 
         val root = PanelRoot(this) { hidePanel() }
@@ -156,6 +216,7 @@ class ControlCenterService : AccessibilityService() {
                 ControlPanel(
                     visible = panelOpen.value,
                     blurAvailable = blurOn,
+                    dark = dark,
                     topInset = topInset,
                     controls = ctrl,
                     actions = actions,
