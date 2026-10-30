@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Control Center</string>
+    <string name="a11y_description">Affiche le centre de contrôle quand tu glisses vers le bas depuis le coin supérieur droit de l’écran.</string>
+</resources>
